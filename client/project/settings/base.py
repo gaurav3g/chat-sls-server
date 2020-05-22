@@ -128,3 +128,4 @@ UNIAUTH_LOGIN_REDIRECT_URL = '/'
 UNIAUTH_LOGIN_DISPLAY_CAS = False
 EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
 UNIAUTH_FROM_EMAIL = 'uniauth@serverless-chat.com'
+STATIC_ROOT = os.path.join(BASE_DIR, "static/")
