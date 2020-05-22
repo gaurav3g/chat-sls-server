@@ -6,6 +6,7 @@ __pycache__/
 *.so
 
 # Distribution / packaging
+.env
 .Python
 env/
 build/
@@ -54,3 +55,4 @@ target/
 todo.txt
 notes/
 venv/
+client/project/settings/.env
