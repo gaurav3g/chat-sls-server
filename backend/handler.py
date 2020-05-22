@@ -58,7 +58,7 @@ def connection_manager(event, context):
 
         # Verify the token
         try:
-            payload = jwt.decode(token, "FAKE_SECRET", algorithms="HS256")
+            payload = jwt.decode(token, "#0wc-0-$@$14e8rbk#bke_9rg@nglfdc3&6z_r6nx!q6&3##l=", algorithms="HS256")
             logger.info("Verified JWT for '{}'".format(payload.get("username")))
         except:
             logger.debug("Failed: Token verification failed.")
@@ -150,7 +150,7 @@ def send_message(event, context):
 
     # Verify the token
     try:
-        payload = jwt.decode(body["token"], "FAKE_SECRET", algorithms="HS256")
+        payload = jwt.decode(body["token"], "#0wc-0-$@$14e8rbk#bke_9rg@nglfdc3&6z_r6nx!q6&3##l=", algorithms="HS256")
         username = payload.get("username")
         logger.info("Verified JWT for '{}'".format(username))
     except:
