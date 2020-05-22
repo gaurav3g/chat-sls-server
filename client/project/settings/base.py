@@ -29,8 +29,8 @@ ALLOWED_HOSTS = ['*']
 # Application definition
 
 INSTALLED_APPS = [
-    'uniauth',
     'chat',
+    'uniauth',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -120,12 +120,16 @@ USE_TZ = True
 STATIC_URL = '/static/'
 
 AUTHENTICATION_BACKENDS = [
-    'uniauth.backends.UsernameOrLinkedEmailBackend',
+    'uniauth.backends.LinkedEmailBackend',
+    'uniauth.backends.CASBackend',
 ]
 
 LOGIN_URL = '/accounts/login/'
+
 UNIAUTH_LOGIN_REDIRECT_URL = '/'
-UNIAUTH_LOGIN_DISPLAY_CAS = False
+
 EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+
 UNIAUTH_FROM_EMAIL = 'uniauth@serverless-chat.com'
+
 STATIC_ROOT = os.path.join(BASE_DIR, "static/")
