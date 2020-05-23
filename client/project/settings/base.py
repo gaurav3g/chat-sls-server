@@ -127,13 +127,16 @@ AUTHENTICATION_BACKENDS = [
 LOGIN_URL = '/accounts/login/'
 UNIAUTH_LOGIN_REDIRECT_URL = '/'
 UNIAUTH_LOGIN_DISPLAY_CAS = False
-# EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
-EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
-UNIAUTH_FROM_EMAIL = 'uniauth@serverless-chat.com'
+
+UNIAUTH_FROM_EMAIL = 'pokedexn71@gmail.com'
 STATIC_ROOT = os.path.join(BASE_DIR, "static/")
 
-EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS')
-EMAIL_HOST = os.getenv('EMAIL_HOST')
-EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER')
-EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD')
-EMAIL_PORT = os.getenv('EMAIL_PORT')
+# EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+# EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+# EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS')
+EMAIL_BACKEND = 'django_smtp_ssl.SSLEmailBackend'
+EMAIL_USE_SSL = os.getenv('AWS_SES_USE_SSL')
+EMAIL_HOST = os.getenv('AWS_SES_HOST')
+EMAIL_HOST_USER = os.getenv('AWS_SES_SMTP_USER')
+EMAIL_HOST_PASSWORD = os.getenv('AWS_SES_PASSWORD')
+EMAIL_PORT = os.getenv('AWS_SES_PORT')
