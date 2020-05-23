@@ -1,6 +1,8 @@
 from django.shortcuts import render
 from uniauth.decorators import login_required
 import jwt
+from django.core.mail import send_mail
+from django.http import HttpResponse
 import os
 
 
@@ -10,3 +12,8 @@ def index(request):
             algorithm="HS256").decode("utf-8")
     return render(request, "chat/index.html",
             {"endpoint": "wss://mdhu4u131c.execute-api.ap-south-1.amazonaws.com/dev", "token": token})
+
+
+def send(request):
+    send_mail('TESTING', 'This is a testing mail', 'pokedexn71@gmail.com', ['pokedexn71@gmail.com'])
+    return HttpResponse("Mail Sent !!")
