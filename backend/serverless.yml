@@ -48,6 +48,8 @@ functions:
         events:
             - websocket:
                 route: sendMessage
+    userMigrate:
+        handler: handler.user_migrate
     ping:
         handler: handler.ping
         events:

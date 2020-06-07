@@ -58,7 +58,7 @@ def connection_manager(event, context):
 
         # Verify the token
         try:
-            payload = jwt.decode(token, "#0wc-0-$@$14e8rbk#bke_9rg@nglfdc3&6z_r6nx!q6&3##l=", algorithms="HS256")
+            payload = jwt.decode(token, "#0wc-0-#@#14e8rbk#bke_9rg@nglfdc3&6z_r6nx!q6&3##l=", algorithms="HS256")
             logger.info("Verified JWT for '{}'".format(payload.get("username")))
         except:
             logger.debug("Failed: Token verification failed.")
@@ -150,7 +150,7 @@ def send_message(event, context):
 
     # Verify the token
     try:
-        payload = jwt.decode(body["token"], "#0wc-0-$@$14e8rbk#bke_9rg@nglfdc3&6z_r6nx!q6&3##l=", algorithms="HS256")
+        payload = jwt.decode(body["token"], "#0wc-0-#@#14e8rbk#bke_9rg@nglfdc3&6z_r6nx!q6&3##l=", algorithms="HS256")
         username = payload.get("username")
         logger.info("Verified JWT for '{}'".format(username))
     except:
@@ -190,9 +190,32 @@ def send_message(event, context):
     return _get_response(200, "Message sent to {} connections."\
             .format(len(connections)))
 
+
 def ping(event, context):
     """
     Sanity check endpoint that echoes back 'PONG' to the sender.
     """
     logger.info("Ping requested.")
     return _get_response(200, "PONG!")
+
+
+def user_migrate(event, context):
+    logger.info("User migaration triggered")
+
+    try:
+        user_data = event['request']['userAttributes']
+    except:
+        logger.info("failed to get user data")
+
+    table = dynamodb.Table("serverless-chat_Users")
+    try:
+        if user_data is not None:
+            table.put_item(Item={"Email": user_data["email"], "uId": user_data["sub"],
+                             "email_verified": user_data["email_verified"],
+                             "Username": user_data["preferred_username"],
+                             "Gender": user_data["gender"]
+                         })
+    except:
+        logger.info("Failed to put user object!")
+
+    return event
