@@ -48,6 +48,11 @@ functions:
         events:
             - websocket:
                 route: sendMessage
+    setConversation:
+        handler: handler.set_conversation
+        events:
+            - websocket:
+                route: setConversation
     userMigrate:
         handler: handler.user_migrate
     ping:

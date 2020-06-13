@@ -26,10 +26,11 @@ def _get_response(status_code, body):
 
 def _send_to_connection(connection_id, data, event):
     gatewayapi = boto3.client("apigatewaymanagementapi",
-            endpoint_url = "https://" + event["requestContext"]["domainName"] +
-                    "/" + event["requestContext"]["stage"])
+                              endpoint_url="https://" + event["requestContext"][
+                                  "domainName"] +
+                                           "/" + event["requestContext"]["stage"])
     return gatewayapi.post_to_connection(ConnectionId=connection_id,
-            Data=json.dumps(data).encode('utf-8'))
+                                         Data=json.dumps(data).encode('utf-8'))
 
 
 def connection_manager(event, context):
@@ -45,8 +46,8 @@ def connection_manager(event, context):
     token = event.get("queryStringParameters", {}).get("token")
 
     if event["requestContext"]["eventType"] == "CONNECT":
-        logger.info("Connect requested (CID: {}, Token: {})"\
-                .format(connectionID, token))
+        logger.info("Connect requested (CID: {}, Token: {})" \
+                    .format(connectionID, token))
 
         # Ensure connectionID and token are set
         if not connectionID:
@@ -58,7 +59,9 @@ def connection_manager(event, context):
 
         # Verify the token
         try:
-            payload = jwt.decode(token, "#0wc-0-#@#14e8rbk#bke_9rg@nglfdc3&6z_r6nx!q6&3##l=", algorithms="HS256")
+            payload = jwt.decode(token,
+                                 "#0wc-0-#@#14e8rbk#bke_9rg@nglfdc3&6z_r6nx!q6&3##l=",
+                                 algorithms="HS256")
             logger.info("Verified JWT for '{}'".format(payload.get("username")))
         except:
             logger.debug("Failed: Token verification failed.")
@@ -83,8 +86,8 @@ def connection_manager(event, context):
         return _get_response(200, "Disconnect successful.")
 
     else:
-        logger.error("Connection manager received unrecognized eventType '{}'"\
-                .format(event["requestContext"]["eventType"]))
+        logger.error("Connection manager received unrecognized eventType '{}'" \
+                     .format(event["requestContext"]["eventType"]))
         return _get_response(500, "Unrecognized eventType.")
 
 
@@ -101,8 +104,8 @@ def get_recent_messages(event, context):
     Return the 10 most recent chat messages.
     """
     connectionID = event["requestContext"].get("connectionId")
-    logger.info("Retrieving most recent messages for CID '{}'"\
-            .format(connectionID))
+    logger.info("Retrieving most recent messages for CID '{}'" \
+                .format(connectionID))
 
     # Ensure connectionID is set
     if not connectionID:
@@ -112,21 +115,21 @@ def get_recent_messages(event, context):
     # Get the 10 most recent chat messages
     table = dynamodb.Table("serverless-chat_Messages")
     response = table.query(KeyConditionExpression="Room = :room",
-            ExpressionAttributeValues={":room": "general"},
-            Limit=10, ScanIndexForward=False)
+                           ExpressionAttributeValues={":room": "general"},
+                           Limit=10, ScanIndexForward=False)
     items = response.get("Items", [])
 
     # Extract the relevant data and order chronologically
     messages = [{"username": x["Username"], "content": x["Content"]}
-            for x in items]
+                for x in items]
     messages.reverse()
 
     # Send them to the client who asked for it
     data = {"messages": messages}
     _send_to_connection(connectionID, data, event)
 
-    return _get_response(200, "Sent recent messages to '{}'."\
-            .format(connectionID))
+    return _get_response(200, "Sent recent messages to '{}'." \
+                         .format(connectionID))
 
 
 def send_message(event, context):
@@ -143,14 +146,16 @@ def send_message(event, context):
         return _get_response(400, "Message body not in dict format.")
     for attribute in ["token", "content"]:
         if attribute not in body:
-            logger.debug("Failed: '{}' not in message dict."\
-                    .format(attribute))
-            return _get_response(400, "'{}' not in message dict"\
-                    .format(attribute))
+            logger.debug("Failed: '{}' not in message dict." \
+                         .format(attribute))
+            return _get_response(400, "'{}' not in message dict" \
+                                 .format(attribute))
 
     # Verify the token
     try:
-        payload = jwt.decode(body["token"], "#0wc-0-#@#14e8rbk#bke_9rg@nglfdc3&6z_r6nx!q6&3##l=", algorithms="HS256")
+        payload = jwt.decode(body["token"],
+                             "#0wc-0-#@#14e8rbk#bke_9rg@nglfdc3&6z_r6nx!q6&3##l=",
+                             algorithms="HS256")
         username = payload.get("username")
         logger.info("Verified JWT for '{}'".format(username))
     except:
@@ -163,8 +168,8 @@ def send_message(event, context):
     # accounting for that is outside the scope of this project)
     table = dynamodb.Table("serverless-chat_Messages")
     response = table.query(KeyConditionExpression="Room = :room",
-            ExpressionAttributeValues={":room": "general"},
-            Limit=1, ScanIndexForward=False)
+                           ExpressionAttributeValues={":room": "general"},
+                           Limit=1, ScanIndexForward=False)
     items = response.get("Items", [])
     index = items[0]["Index"] + 1 if len(items) > 0 else 0
 
@@ -172,8 +177,8 @@ def send_message(event, context):
     timestamp = int(time.time())
     content = body["content"]
     table.put_item(Item={"Room": "general", "Index": index,
-            "Timestamp": timestamp, "Username": username,
-            "Content": content})
+                         "Timestamp": timestamp, "Username": username,
+                         "Content": content})
 
     # Get all current connections
     table = dynamodb.Table("serverless-chat_Connections")
@@ -187,8 +192,8 @@ def send_message(event, context):
     data = {"messages": [message]}
     for connectionID in connections:
         _send_to_connection(connectionID, data, event)
-    return _get_response(200, "Message sent to {} connections."\
-            .format(len(connections)))
+    return _get_response(200, "Message sent to {} connections." \
+                         .format(len(connections)))
 
 
 def ping(event, context):
@@ -211,11 +216,80 @@ def user_migrate(event, context):
     try:
         if user_data is not None:
             table.put_item(Item={"Email": user_data["email"], "uId": user_data["sub"],
-                             "email_verified": user_data["email_verified"],
-                             "Username": user_data["preferred_username"],
-                             "Gender": user_data["gender"]
-                         })
+                                 "email_verified": user_data["email_verified"],
+                                 "Username": user_data["preferred_username"],
+                                 "Gender": user_data["gender"]
+                                 })
     except:
         logger.info("Failed to put user object!")
 
     return event
+
+
+def set_conversation(event, context, items=None):
+    logger.info("Set Conversation triggered")
+
+    body = _get_body(event)
+    if not isinstance(body, dict):
+        logger.debug("Failed: Request body not in dict format.")
+        return _get_response(400, "Request body not in dict format.")
+    for attribute in ["token", "participant"]:
+        if attribute not in body:
+            logger.debug("Failed: '{}' not in request dict." \
+                         .format(attribute))
+            return _get_response(400, "'{}' not in request dict" \
+                                 .format(attribute))
+
+    try:
+        payload = jwt.decode(body["token"],
+                             "#0wc-0-#@#14e8rbk#bke_9rg@nglfdc3&6z_r6nx!q6&3##l=",
+                             algorithms="HS256")
+        username = payload.get("username")
+        logger.info("Verified JWT for '{}'".format(username))
+    except:
+        logger.debug("Failed: Token verification failed.")
+        return _get_response(400, "Token verification failed.")
+
+    if payload.get('email') == body["participant"]:
+        logger.debug("Failed: Can't create room")
+        return _get_response(400, "Can't create room.")
+
+    user_table = dynamodb.Table("serverless-chat_Users")
+    createFlag = True
+
+    user_response = user_table.query(KeyConditionExpression="Email = :email",
+                                     ExpressionAttributeValues={
+                                         ":email": body['participant']},
+                                     Limit=1)
+    user_obj = user_response.get("Items", [])
+    if len(user_obj) > 0:
+        participant = {"username": user_obj[0]["Username"],
+                       "email": user_obj[0]["Email"],
+                       "uId": user_obj[0]['uId']}
+    else:
+        logger.debug("Failed: User not found.")
+        return _get_response(400, "User not found.")
+
+    title = "_".join(sorted([payload.get('email'), participant["email"]]))
+
+    conversation_table = dynamodb.Table("serverless-chat_Personal_Room")
+    conversation_response = conversation_table.query(KeyConditionExpression="Id = :id", ExpressionAttributeValues={":id": title}, Limit=1)
+    conversation_items = conversation_response.get("Items", [])
+
+    if len(conversation_items) == 0:
+        try:
+            conversation_table.put_item(
+                Item={"id": title,
+                      "created_by": payload.get('email'),
+                      "created_at": int(time.time()),
+                      "updated_at": int(time.time()),
+                      "deleted_at": int(time.time()),
+                      "participant1": payload.get('email'),
+                      "participant2": participant["email"],
+                      })
+        except:
+            logger.info("Failed to create chat-room!")
+
+    return _get_response(200, {
+        "roomId": title
+    })
