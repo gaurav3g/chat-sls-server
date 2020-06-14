@@ -3,6 +3,7 @@ import json
 import jwt
 import logging
 import time
+import uuid
 
 logger = logging.getLogger("handler_logger")
 logger.setLevel(logging.DEBUG)
@@ -18,10 +19,10 @@ def _get_body(event):
         return {}
 
 
-def _get_response(status_code, body):
+def _get_response(status_code, body, headers=None):
     if not isinstance(body, str):
         body = json.dumps(body)
-    return {"statusCode": status_code, "body": body}
+    return {"statusCode": status_code, "body": body, "headers": headers}
 
 
 def _send_to_connection(connection_id, data, event):
@@ -230,6 +231,7 @@ def set_conversation(event, context, items=None):
     logger.info("Set Conversation triggered")
 
     body = _get_body(event)
+    logger.info(body)
     if not isinstance(body, dict):
         logger.debug("Failed: Request body not in dict format.")
         return _get_response(400, "Request body not in dict format.")
@@ -270,26 +272,34 @@ def set_conversation(event, context, items=None):
         logger.debug("Failed: User not found.")
         return _get_response(400, "User not found.")
 
-    title = "_".join(sorted([payload.get('email'), participant["email"]]))
+    # Create unique data for room
+    room_title = "_".join(sorted([payload.get('email'), participant["email"]]))
+    room_url = str(uuid.uuid5(uuid.NAMESPACE_DNS, room_title))
 
     conversation_table = dynamodb.Table("serverless-chat_Personal_Room")
-    conversation_response = conversation_table.query(KeyConditionExpression="Id = :id", ExpressionAttributeValues={":id": title}, Limit=1)
+    conversation_response = conversation_table.query(
+        KeyConditionExpression="RoomId = :room_id",
+        ExpressionAttributeValues={":room_id": room_title},
+        Limit=1)
     conversation_items = conversation_response.get("Items", [])
 
-    if len(conversation_items) == 0:
+    if len(conversation_items):
+        room_data = conversation_items[0]
+    else:
         try:
-            conversation_table.put_item(
-                Item={"id": title,
-                      "created_by": payload.get('email'),
-                      "created_at": int(time.time()),
-                      "updated_at": int(time.time()),
-                      "deleted_at": int(time.time()),
-                      "participant1": payload.get('email'),
-                      "participant2": participant["email"],
-                      })
+            room_data = {"RoomId": room_title,
+                         "created_by": payload.get('email'),
+                         "created_at": int(time.time()),
+                         "updated_at": int(time.time()),
+                         "deleted_at": 0,
+                         "participant1": payload.get('email'),
+                         "participant2": participant["email"],
+                         "url": room_url
+                         }
+            conversation_table.put_item(Item=room_data)
         except:
             logger.info("Failed to create chat-room!")
 
-    return _get_response(200, {
-        "roomId": title
-    })
+    return _get_response(200, room_data, headers={
+            'Access-Control-Allow-Origin': '*'
+        })

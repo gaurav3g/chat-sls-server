@@ -51,8 +51,10 @@ functions:
     setConversation:
         handler: handler.set_conversation
         events:
-            - websocket:
-                route: setConversation
+            - http:
+                method: post
+                cors: true
+                path: set-conversation
     userMigrate:
         handler: handler.user_migrate
     ping:
