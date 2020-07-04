@@ -27,43 +27,99 @@ provider:
 
 functions:
     connectionManager:
-        handler: handler.connection_manager
+        handler: handlers/handler.connection_manager
         events:
             - websocket:
                 route: $connect
+                authorizer:
+                  name: wsTempTokenAuthorizer
+                  resultTtlInSeconds: 0
+                  identitySource:
+                    - 'route.request.querystring.token'
+                  type: request
             - websocket:
                 route: $disconnect
     defaultMessage:
-        handler: handler.default_message
+        handler: handlers/handler.default_message
         events:
             - websocket:
                 route: $default
     getRecentMessages:
-        handler: handler.get_recent_messages
+        handler: handlers/handler.get_recent_messages
         events:
             - websocket:
                 route: getRecentMessages
     sendMessage:
-        handler: handler.send_message
+        handler: handlers/handler.send_message
         events:
             - websocket:
                 route: sendMessage
+                authorizer:
+#                    # name: auth    NOTE: you can either use "name" or arn" properties
+#                    arn: arn:aws:lambda:us-east-1:1234567890:function:auth
+#                    identitySource:
+#                      - 'route.request.header.Auth'
+#                      - 'route.request.querystring.Auth'
     setConversation:
-        handler: handler.set_conversation
+        handler: handlers/handler.set_conversation
         events:
             - http:
                 method: post
-                cors: true
+                cors:
+                    origin: '*'
+                    headers:
+                      - Content-Type
+                      - t2m-authtoken
+                    allowCredentials: false
                 path: set-conversation
+                authorizer:
+                    name: tokenAuthorizer
+                    resultTtlInSeconds: 0
+                    identitySource: method.request.header.t2m-authtoken
+                    type: request
     userMigrate:
-        handler: handler.user_migrate
+        handler: handlers/handler.user_migrate
     ping:
-        handler: handler.ping
+        handler: handlers/handler.ping
         events:
             - http:
                 path: ping
                 method: get
+    getUsername:
+        handler: handlers/get/get_username.get_username
+        events:
+          - http:
+              path: get-username
+              method: get
+              cors:
+                  origin: '*'
+                  headers:
+                    - Content-Type
+                    - t2m-temptoken
+                  allowCredentials: false
+              authorizer:
+                name: tempTokenAuthorizer
+                resultTtlInSeconds: 0
+                identitySource: method.request.header.t2m-temptoken
+                type: request
+    tokenAuthorizer:
+      handler: helpers/authorizers/user_pool_authorizer.lambda_handler
+    tempTokenAuthorizer:
+      handler: helpers/authorizers/temp_token_authorizer.lambda_handler
+    wsTempTokenAuthorizer:
+      handler: helpers/authorizers/ws_temptoken_auth.lambda_handler
 
+resources:
+  Resources:
+    GatewayResponseDefault4XX:
+      Type: 'AWS::ApiGateway::GatewayResponse'
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: 'ApiGatewayRestApi'
 
 plugins:
   - serverless-python-requirements

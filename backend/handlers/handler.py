@@ -4,11 +4,16 @@ import jwt
 import logging
 import time
 import uuid
+from lambda_decorators import cors_headers
+
+from utils.json_encoder import json_encoder
+from utils.user_attr_formatter import formatter
 
 logger = logging.getLogger("handler_logger")
 logger.setLevel(logging.DEBUG)
 
 dynamodb = boto3.resource("dynamodb")
+cognito_client = boto3.client('cognito-idp')
 
 
 def _get_body(event):
@@ -19,10 +24,10 @@ def _get_body(event):
         return {}
 
 
-def _get_response(status_code, body, headers=None):
+def _get_response(status_code, body):
     if not isinstance(body, str):
-        body = json.dumps(body)
-    return {"statusCode": status_code, "body": body, "headers": headers}
+        body = json.dumps(body, default=json_encoder)
+    return {"statusCode": status_code, "body": body}
 
 
 def _send_to_connection(connection_id, data, event):
@@ -31,18 +36,11 @@ def _send_to_connection(connection_id, data, event):
                                   "domainName"] +
                                            "/" + event["requestContext"]["stage"])
     return gatewayapi.post_to_connection(ConnectionId=connection_id,
-                                         Data=json.dumps(data).encode('utf-8'))
+                                         Data=json.dumps(data, default=json_encoder).encode('utf-8'))
 
 
 def connection_manager(event, context):
-    """
-    Handles connecting and disconnecting for the Websocket.
-
-    Connect verifes the passed in token, and if successful,
-    adds the connectionID to the database.
-
-    Disconnect removes the connectionID from the database.
-    """
+    logger.info("WE ENTERED {}".format(event))
     connectionID = event["requestContext"].get("connectionId")
     token = event.get("queryStringParameters", {}).get("token")
 
@@ -104,6 +102,7 @@ def get_recent_messages(event, context):
     """
     Return the 10 most recent chat messages.
     """
+    body = _get_body(event)
     connectionID = event["requestContext"].get("connectionId")
     logger.info("Retrieving most recent messages for CID '{}'" \
                 .format(connectionID))
@@ -113,20 +112,38 @@ def get_recent_messages(event, context):
         logger.error("Failed: connectionId value not set.")
         return _get_response(500, "connectionId value not set.")
 
+    LastEvaluatedKeyIn = None
+    if "LastEvaluatedKey" in body:
+        LastEvaluatedKeyIn = body["LastEvaluatedKey"]
+
+    logger.info(LastEvaluatedKeyIn)
+
     # Get the 10 most recent chat messages
     table = dynamodb.Table("serverless-chat_Messages")
-    response = table.query(KeyConditionExpression="Room = :room",
-                           ExpressionAttributeValues={":room": "general"},
-                           Limit=10, ScanIndexForward=False)
+
+    if LastEvaluatedKeyIn is not None:
+        response = table.query(KeyConditionExpression="Room = :room",
+                               ExpressionAttributeValues={":room": "general"},
+                               Limit=10, ExclusiveStartKey={'Index': LastEvaluatedKeyIn, 'Room': 'general'},
+                               ScanIndexForward=False)
+    else:
+        response = table.query(KeyConditionExpression="Room = :room",
+                               ExpressionAttributeValues={":room": "general"},
+                               Limit=20, ScanIndexForward=False)
+
     items = response.get("Items", [])
 
     # Extract the relevant data and order chronologically
-    messages = [{"username": x["Username"], "content": x["Content"]}
+    messages = [{"sender": x["Username"], "content": x["Content"], "created_at": x["Timestamp"]}
                 for x in items]
     messages.reverse()
-
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                
     # Send them to the client who asked for it
     data = {"messages": messages}
+
+    if response.get('LastEvaluatedKey', None) is not None:
+        data["LastEvaluatedKey"] = int(response.get('LastEvaluatedKey', None).get("Index", None))
+
     _send_to_connection(connectionID, data, event)
 
     return _get_response(200, "Sent recent messages to '{}'." \
@@ -188,9 +205,9 @@ def send_message(event, context):
     connections = [x["ConnectionID"] for x in items if "ConnectionID" in x]
 
     # Send the message data to all connections
-    message = {"username": username, "content": content}
+    message = {"sender": username, "content": content, "created_at": timestamp}
     logger.debug("Broadcasting message: {}".format(message))
-    data = {"messages": [message]}
+    data = {"messages": [message], "end": 1}
     for connectionID in connections:
         _send_to_connection(connectionID, data, event)
     return _get_response(200, "Message sent to {} connections." \
@@ -227,15 +244,14 @@ def user_migrate(event, context):
     return event
 
 
+@cors_headers
 def set_conversation(event, context, items=None):
-    logger.info("Set Conversation triggered")
-
     body = _get_body(event)
-    logger.info(body)
     if not isinstance(body, dict):
         logger.debug("Failed: Request body not in dict format.")
         return _get_response(400, "Request body not in dict format.")
-    for attribute in ["token", "participant"]:
+    # for attribute in ["token", "participant"]:
+    for attribute in ["participant"]:
         if attribute not in body:
             logger.debug("Failed: '{}' not in request dict." \
                          .format(attribute))
@@ -243,16 +259,19 @@ def set_conversation(event, context, items=None):
                                  .format(attribute))
 
     try:
-        payload = jwt.decode(body["token"],
-                             "#0wc-0-#@#14e8rbk#bke_9rg@nglfdc3&6z_r6nx!q6&3##l=",
-                             algorithms="HS256")
-        username = payload.get("username")
+        user = cognito_client.get_user(AccessToken=event['headers']['t2m-authtoken'])
+        user_data = formatter(user["UserAttributes"])
+        # logger.info(user_data)
+        # payload = jwt.decode(body["token"],
+        #                      "#0wc-0-#@#14e8rbk#bke_9rg@nglfdc3&6z_r6nx!q6&3##l=",
+        #                      algorithms="HS256")
+        username = user_data["preferred_username"]
         logger.info("Verified JWT for '{}'".format(username))
     except:
         logger.debug("Failed: Token verification failed.")
         return _get_response(400, "Token verification failed.")
 
-    if payload.get('email') == body["participant"]:
+    if user_data["email"] == body["participant"]:
         logger.debug("Failed: Can't create room")
         return _get_response(400, "Can't create room.")
 
@@ -273,7 +292,7 @@ def set_conversation(event, context, items=None):
         return _get_response(400, "User not found.")
 
     # Create unique data for room
-    room_title = "_".join(sorted([payload.get('email'), participant["email"]]))
+    room_title = "_".join(sorted([user_data["email"], participant["email"]]))
     room_url = str(uuid.uuid5(uuid.NAMESPACE_DNS, room_title))
 
     conversation_table = dynamodb.Table("serverless-chat_Personal_Room")
@@ -288,18 +307,16 @@ def set_conversation(event, context, items=None):
     else:
         try:
             room_data = {"RoomId": room_title,
-                         "created_by": payload.get('email'),
+                         "created_by": user_data["email"],
                          "created_at": int(time.time()),
                          "updated_at": int(time.time()),
                          "deleted_at": 0,
-                         "participant1": payload.get('email'),
+                         "participant1": user_data["email"],
                          "participant2": participant["email"],
                          "url": room_url
                          }
             conversation_table.put_item(Item=room_data)
         except:
             logger.info("Failed to create chat-room!")
-
-    return _get_response(200, room_data, headers={
-            'Access-Control-Allow-Origin': '*'
-        })
+    logger.info(room_data)
+    return _get_response(200, room_data)
