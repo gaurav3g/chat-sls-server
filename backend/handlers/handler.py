@@ -185,8 +185,7 @@ def send_message(event, context):
         if len(username_obj) <= 0:
             return _get_response(400, "User doesn't exist.")
 
-        if username_obj[0]["accessToken"] != body["token"] or exp <= int(
-                round(time.time() * 1000)):
+        if username_obj[0]["accessToken"] != body["token"] or exp <= int(time.time()):
             return _get_response(400, "Invalid access token.")
     except:
         return _get_response(400, "Token verification failed.")

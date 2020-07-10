@@ -15,7 +15,7 @@ dynamo_db = boto3.resource("dynamodb")
 def get_access_token(username=""):
     curr_time = int(time.time())
     token_obj = {
-        "exp": curr_time + 3600000,
+        "exp": curr_time + 3600,
         "iat": curr_time,
         "username": username
     }
