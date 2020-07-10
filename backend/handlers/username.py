@@ -39,10 +39,10 @@ def set_username(event, context, items=None):
         return _get_response(400, "'{}' not in request" \
                              .format("username"))
 
-    username = body['username'].lower()
+    username = body['username']
     username_table = dynamodb.Table("serverless-chat_Username")
 
-    username_obj = get_username(username)
+    username_obj = get_username(username.lower())
 
     if len(username_obj) > 0:
         return _get_response(404, "Username already exists")
