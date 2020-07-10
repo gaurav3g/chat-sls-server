@@ -8,6 +8,7 @@ from lambda_decorators import cors_headers
 
 from utils.json_encoder import json_encoder
 from utils.user_attr_formatter import formatter
+from utils.username import get_username
 
 logger = logging.getLogger("handler_logger")
 logger.setLevel(logging.DEBUG)
@@ -27,16 +28,23 @@ def _get_body(event):
 def _get_response(status_code, body):
     if not isinstance(body, str):
         body = json.dumps(body, default=json_encoder)
+
+    if status_code != 200:
+        logger.debug('Failed: {}'.format(body))
+
     return {"statusCode": status_code, "body": body}
 
 
 def _send_to_connection(connection_id, data, event):
-    gatewayapi = boto3.client("apigatewaymanagementapi",
+    gateway_client = boto3.client("apigatewaymanagementapi",
                               endpoint_url="https://" + event["requestContext"][
                                   "domainName"] +
                                            "/" + event["requestContext"]["stage"])
-    return gatewayapi.post_to_connection(ConnectionId=connection_id,
+    try:
+        return gateway_client.post_to_connection(ConnectionId=connection_id,
                                          Data=json.dumps(data, default=json_encoder).encode('utf-8'))
+    except GoneException:
+        return false
 
 
 def connection_manager(event, context):
@@ -53,7 +61,6 @@ def connection_manager(event, context):
             logger.error("Failed: connectionId value not set.")
             return _get_response(500, "connectionId value not set.")
         if not token:
-            logger.debug("Failed: token query parameter not provided.")
             return _get_response(400, "token query parameter not provided.")
 
         # Verify the token
@@ -63,7 +70,6 @@ def connection_manager(event, context):
                                  algorithms="HS256")
             logger.info("Verified JWT for '{}'".format(payload.get("username")))
         except:
-            logger.debug("Failed: Token verification failed.")
             return _get_response(400, "Token verification failed.")
 
         # Add connectionID to the database
@@ -116,6 +122,13 @@ def get_recent_messages(event, context):
     if "LastEvaluatedKey" in body:
         LastEvaluatedKeyIn = body["LastEvaluatedKey"]
 
+    limit = 100
+    try:
+        if "limit" in body and body["limit"] < 60:
+            limit = body["limit"]
+    except ValueError:
+        logger.error("Error in getting limit")
+
     logger.info(LastEvaluatedKeyIn)
 
     # Get the 10 most recent chat messages
@@ -124,12 +137,12 @@ def get_recent_messages(event, context):
     if LastEvaluatedKeyIn is not None:
         response = table.query(KeyConditionExpression="Room = :room",
                                ExpressionAttributeValues={":room": "general"},
-                               Limit=10, ExclusiveStartKey={'Index': LastEvaluatedKeyIn, 'Room': 'general'},
+                               Limit=limit, ExclusiveStartKey={'Index': LastEvaluatedKeyIn, 'Room': 'general'},
                                ScanIndexForward=False)
     else:
         response = table.query(KeyConditionExpression="Room = :room",
                                ExpressionAttributeValues={":room": "general"},
-                               Limit=20, ScanIndexForward=False)
+                               Limit=limit, ScanIndexForward=False)
 
     items = response.get("Items", [])
 
@@ -151,21 +164,11 @@ def get_recent_messages(event, context):
 
 
 def send_message(event, context):
-    """
-    When a message is sent on the socket, verify the passed in token,
-    and forward it to all connections if successful.
-    """
-    logger.info("Message sent on WebSocket.")
-
-    # Ensure all required fields were provided
     body = _get_body(event)
     if not isinstance(body, dict):
-        logger.debug("Failed: message body not in dict format.")
         return _get_response(400, "Message body not in dict format.")
     for attribute in ["token", "content"]:
         if attribute not in body:
-            logger.debug("Failed: '{}' not in message dict." \
-                         .format(attribute))
             return _get_response(400, "'{}' not in message dict" \
                                  .format(attribute))
 
@@ -176,8 +179,16 @@ def send_message(event, context):
                              algorithms="HS256")
         username = payload.get("username")
         logger.info("Verified JWT for '{}'".format(username))
+        exp = payload.get("exp")
+        username_obj = get_username(username)
+
+        if len(username_obj) <= 0:
+            return _get_response(400, "User doesn't exist.")
+
+        if username_obj[0]["accessToken"] != body["token"] or exp <= int(
+                round(time.time() * 1000)):
+            return _get_response(400, "Invalid access token.")
     except:
-        logger.debug("Failed: Token verification failed.")
         return _get_response(400, "Token verification failed.")
 
     # Get the next message index
@@ -248,13 +259,10 @@ def user_migrate(event, context):
 def set_conversation(event, context, items=None):
     body = _get_body(event)
     if not isinstance(body, dict):
-        logger.debug("Failed: Request body not in dict format.")
         return _get_response(400, "Request body not in dict format.")
     # for attribute in ["token", "participant"]:
     for attribute in ["participant"]:
         if attribute not in body:
-            logger.debug("Failed: '{}' not in request dict." \
-                         .format(attribute))
             return _get_response(400, "'{}' not in request dict" \
                                  .format(attribute))
 
@@ -268,11 +276,9 @@ def set_conversation(event, context, items=None):
         username = user_data["preferred_username"]
         logger.info("Verified JWT for '{}'".format(username))
     except:
-        logger.debug("Failed: Token verification failed.")
         return _get_response(400, "Token verification failed.")
 
     if user_data["email"] == body["participant"]:
-        logger.debug("Failed: Can't create room")
         return _get_response(400, "Can't create room.")
 
     user_table = dynamodb.Table("serverless-chat_Users")
@@ -288,7 +294,6 @@ def set_conversation(event, context, items=None):
                        "email": user_obj[0]["Email"],
                        "uId": user_obj[0]['uId']}
     else:
-        logger.debug("Failed: User not found.")
         return _get_response(400, "User not found.")
 
     # Create unique data for room

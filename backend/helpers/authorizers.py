@@ -6,6 +6,7 @@ from jose import jwk, jwt
 from jose.utils import base64url_decode
 
 from utils.generate_auth_policy import generatePolicy
+from utils.username import get_username
 
 logger = logging.getLogger("handler_logger")
 logger.setLevel(logging.DEBUG)
@@ -82,7 +83,7 @@ def decode_verify_jwt(token):
     return response
 
 
-def lambda_handler(event, context):
+def user_pool_auth(event, context):
     try:
         # Verify and get information from id_token
         idInformation = decode_verify_jwt(event['headers']['t2m-authtoken'])
@@ -101,3 +102,79 @@ def lambda_handler(event, context):
         return generatePolicy(None, 'Deny', event['methodArn'])
 
     return generatePolicy(principalId, 'Allow', event['methodArn'], idInformation['data'])
+
+
+def temp_token_auth(event, context):
+    logger.info(event)
+    try:
+        payload = jwt.decode(event['headers']['t2m-temptoken'],
+                             "#0wc-0-#@#14e8rbk#bke_9rg@nglfdc3&6z_r6nx!q6&3##l=",
+                             algorithms="HS256")
+        username = payload.get("username")
+        logger.info("Verified JWT for '{}'".format(username))
+    except ValueError as err:
+        logger.debug("Failed: Token verification failed.")
+        return generatePolicy(None, 'Deny', event['methodArn'])
+
+    return generatePolicy(username, 'Allow', event['methodArn'], {"username": username})
+
+
+def guest_token_auth(event, context):
+    logger.info(event)
+    try:
+        payload = jwt.decode(event['headers']['t2m-temptoken'],
+                             "#0wc-0-#@#14e8rbk#bke_9rg@nglfdc3&6z_r6nx!q6&3##l=",
+                             algorithms="HS256")
+        username = payload.get("username")
+        username_obj = get_username(username)
+        if len(username_obj) <= 0:
+            logger.debug("Failed: User doesn't exist.")
+            return generatePolicy(None, 'Deny', event['methodArn'])
+
+        logger.info("Verified JWT for '{}'".format(username))
+    except ValueError as err:
+        logger.debug("Failed: Token verification failed.")
+        return generatePolicy(None, 'Deny', event['methodArn'])
+
+    return generatePolicy(username, 'Allow', event['methodArn'], {"username": username})
+
+
+# def ws_temp_token_auth(event, context):
+#     try:
+#         payload = jwt.decode(event.get("queryStringParameters", {}).get('token'),
+#                              "#0wc-0-#@#14e8rbk#bke_9rg@nglfdc3&6z_r6nx!q6&3##l=",
+#                              algorithms="HS256")
+#         username = payload.get("username")
+#         logger.info("Verified JWT for '{}'".format(username))
+#     except ValueError as err:
+#         logger.debug("Failed: Token verification failed.")
+#         return generatePolicy(None, 'Deny', event['methodArn'])
+#
+#     logger.info(generatePolicy("user", 'Allow', event['methodArn'], {"username": username}))
+#     return generatePolicy("user", 'Allow', event['methodArn'], {"username": username})
+
+
+def ws_guest_token_auth(event, context):
+    try:
+        token = event.get("queryStringParameters", {}).get('token')
+        payload = jwt.decode(token,
+                             "#0wc-0-#@#14e8rbk#bke_9rg@nglfdc3&6z_r6nx!q6&3##l=",
+                             algorithms="HS256")
+        username = payload.get("username")
+        exp = payload.get("exp")
+        username_obj = get_username(username)
+
+        if len(username_obj) <= 0 :
+            logger.debug("Failed: User doesn't exist.")
+            return generatePolicy(None, 'Deny', event['methodArn'])
+
+        if username_obj[0]["accessToken"] != token or exp <= int(time.time()):
+            logger.debug("Failed: Invalid access token")
+            return generatePolicy(None, 'Deny', event['methodArn'])
+
+    except ValueError as err:
+        logger.debug("Failed: Token verification failed.")
+        return generatePolicy(None, 'Deny', event['methodArn'])
+
+    return generatePolicy("user", 'Allow', event['methodArn'], {"username": username})
+

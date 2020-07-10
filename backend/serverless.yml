@@ -28,11 +28,12 @@ provider:
 functions:
     connectionManager:
         handler: handlers/handler.connection_manager
+        package: {}
         events:
             - websocket:
                 route: $connect
                 authorizer:
-                  name: wsTempTokenAuthorizer
+                  name: wsGuestTokenAuthorizer
                   resultTtlInSeconds: 0
                   identitySource:
                     - 'route.request.querystring.token'
@@ -41,16 +42,19 @@ functions:
                 route: $disconnect
     defaultMessage:
         handler: handlers/handler.default_message
+        package: {}
         events:
             - websocket:
                 route: $default
     getRecentMessages:
         handler: handlers/handler.get_recent_messages
+        package: {}
         events:
             - websocket:
                 route: getRecentMessages
     sendMessage:
         handler: handlers/handler.send_message
+        package: {}
         events:
             - websocket:
                 route: sendMessage
@@ -62,6 +66,7 @@ functions:
 #                      - 'route.request.querystring.Auth'
     setConversation:
         handler: handlers/handler.set_conversation
+        package: {}
         events:
             - http:
                 method: post
@@ -79,17 +84,19 @@ functions:
                     type: request
     userMigrate:
         handler: handlers/handler.user_migrate
+        package: {}
     ping:
         handler: handlers/handler.ping
         events:
             - http:
                 path: ping
                 method: get
-    getUsername:
-        handler: handlers/get/get_username.get_username
+    checkUsername:
+        handler: handlers/username.check_username
+        package: {}
         events:
           - http:
-              path: get-username
+              path: find-username
               method: get
               cors:
                   origin: '*'
@@ -102,12 +109,56 @@ functions:
                 resultTtlInSeconds: 0
                 identitySource: method.request.header.t2m-temptoken
                 type: request
+    setUsername:
+      handler: handlers/username.set_username
+      package: {}
+      events:
+        - http:
+            path: set-username
+            method: put
+            cors:
+              origin: '*'
+              headers:
+                - Content-Type
+                - t2m-temptoken
+              allowCredentials: false
+            authorizer:
+              name: tempTokenAuthorizer
+              resultTtlInSeconds: 0
+              identitySource: method.request.header.t2m-temptoken
+              type: request
+    getAccessTokenWS:
+      handler: handlers/auth.get_tokens
+      package: {}
+      events:
+        - http:
+            path: ws-auth
+            method: post
+            cors:
+              origin: '*'
+              headers:
+                - Content-Type
+                - t2m-temptoken
+              allowCredentials: false
+            authorizer:
+              name: tempTokenAuthorizer
+              resultTtlInSeconds: 0
+              identitySource: method.request.header.t2m-temptoken
+              type: request
     tokenAuthorizer:
-      handler: helpers/authorizers/user_pool_authorizer.lambda_handler
+      handler: helpers/authorizers.user_pool_auth
+      package: {}
     tempTokenAuthorizer:
-      handler: helpers/authorizers/temp_token_authorizer.lambda_handler
-    wsTempTokenAuthorizer:
-      handler: helpers/authorizers/ws_temptoken_auth.lambda_handler
+      handler: helpers/authorizers.temp_token_auth
+      package: {}
+    guestTokenAuthorizer:
+      handler: helpers/authorizers.guest_token_auth
+      package: {}
+#    wsTempTokenAuthorizer:
+#      handler: helpers/authorizers.ws_temp_token_auth
+    wsGuestTokenAuthorizer:
+      handler: helpers/authorizers.ws_guest_token_auth
+      package: {}
 
 resources:
   Resources:
