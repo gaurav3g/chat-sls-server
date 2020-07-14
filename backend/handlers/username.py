@@ -34,7 +34,6 @@ def check_username(event, context, items=None):
 @cors_headers
 def set_username(event, context, items=None):
     body = _get_body(event)
-    logger.info(body)
     if body['username'] is None:
         return _get_response(400, "'{}' not in request" \
                              .format("username"))
@@ -43,7 +42,7 @@ def set_username(event, context, items=None):
     username_table = dynamodb.Table("serverless-chat_Username")
 
     username_obj = get_username(username.lower())
-
+    logger.info("{}, {}, {}".format(username, username.lower(), username_obj))
     if len(username_obj) > 0:
         return _get_response(404, "Username already exists")
     else:

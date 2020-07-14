@@ -8,7 +8,8 @@ from lambda_decorators import cors_headers
 
 from utils.json_encoder import json_encoder
 from utils.user_attr_formatter import formatter
-from utils.username import get_username
+from utils.user import get_user_by_email
+from helpers.authorizers import ws_guest_token_auth
 
 logger = logging.getLogger("handler_logger")
 logger.setLevel(logging.DEBUG)
@@ -48,7 +49,7 @@ def _send_to_connection(connection_id, data, event):
 
 
 def connection_manager(event, context):
-    logger.info("WE ENTERED {}".format(event))
+    logger.info(event)
     connectionID = event["requestContext"].get("connectionId")
     token = event.get("queryStringParameters", {}).get("token")
 
@@ -64,17 +65,29 @@ def connection_manager(event, context):
             return _get_response(400, "token query parameter not provided.")
 
         # Verify the token
-        try:
-            payload = jwt.decode(token,
-                                 "#0wc-0-#@#14e8rbk#bke_9rg@nglfdc3&6z_r6nx!q6&3##l=",
-                                 algorithms="HS256")
-            logger.info("Verified JWT for '{}'".format(payload.get("username")))
-        except:
-            return _get_response(400, "Token verification failed.")
+        # try:
+        #     payload = jwt.decode(token,
+        #                          "#0wc-0-#@#14e8rbk#bke_9rg@nglfdc3&6z_r6nx!q6&3##l=",
+        #                          algorithms="HS256")
+        #     email = payload.get("email")
+        #
+        # except:
+        #     return _get_response(400, "Token verification failed.")
+
+        email = event.get("requestContext", {}).get("authorizer", {}).get("email")
 
         # Add connectionID to the database
-        table = dynamodb.Table("serverless-chat_Connections")
-        table.put_item(Item={"ConnectionID": connectionID})
+        user_table = dynamodb.Table("serverless-chat_Users")
+        user_table.update_item(
+            Key={'Email': email},
+            UpdateExpression="set ConnectionID=:c",
+            ExpressionAttributeValues={
+                ':c': connectionID
+            },
+            ReturnValues="UPDATED_NEW"
+        )
+        connection_table = dynamodb.Table("serverless-chat_Connections")
+        connection_table.put_item(Item={"ConnectionID": connectionID, 'Email': email})
         return _get_response(200, "Connect successful.")
 
     elif event["requestContext"]["eventType"] == "DISCONNECT":
@@ -87,6 +100,23 @@ def connection_manager(event, context):
 
         # Remove the connectionID from the database
         table = dynamodb.Table("serverless-chat_Connections")
+
+        response = table.query(KeyConditionExpression="ConnectionID = :c",
+                               ExpressionAttributeValues={":c": connectionID},
+                               Limit=1, ScanIndexForward=False)
+
+        email = response.get("Items", [])[0]["Email"]
+
+        user_connection_table = dynamodb.Table("serverless-chat_Users")
+        user_connection_table.update_item(
+            Key={'Email': email},
+            UpdateExpression="set ConnectionID=:c",
+            ExpressionAttributeValues={
+                ':c': ""
+            },
+            ReturnValues="UPDATED_NEW"
+        )
+
         table.delete_item(Key={"ConnectionID": connectionID})
         return _get_response(200, "Disconnect successful.")
 
@@ -147,10 +177,23 @@ def get_recent_messages(event, context):
     items = response.get("Items", [])
 
     # Extract the relevant data and order chronologically
-    messages = [{"sender": x["Username"], "content": x["Content"], "created_at": x["Timestamp"]}
+    messages = [{"Email": x["Email"], "content": x["Content"], "created_at": x["created_at"]}
                 for x in items]
     messages.reverse()
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                
+
+    parsed_user = {}
+    logger.info('b4 map : {}'.format(messages))
+
+    def map_function(x):
+        if x['Email'] not in parsed_user:
+            parsed_user[x['Email']] = get_user_by_email(x['Email'])[0]
+
+        return {**x, "sender": {"Username": parsed_user[x['Email']]["Username"],
+                                "Email": parsed_user[x['Email']]["Email"]}}
+
+    messages = list(map(map_function, messages))
+    logger.info('after map : {}'.format(messages))
+
     # Send them to the client who asked for it
     data = {"messages": messages}
 
@@ -173,39 +216,30 @@ def send_message(event, context):
                                  .format(attribute))
 
     # Verify the token
-    try:
-        payload = jwt.decode(body["token"],
-                             "#0wc-0-#@#14e8rbk#bke_9rg@nglfdc3&6z_r6nx!q6&3##l=",
-                             algorithms="HS256")
-        username = payload.get("username")
-        logger.info("Verified JWT for '{}'".format(username))
-        exp = payload.get("exp")
-        username_obj = get_username(username)
-
-        if len(username_obj) <= 0:
-            return _get_response(400, "User doesn't exist.")
-
-        if username_obj[0]["accessToken"] != body["token"] or exp <= int(time.time()):
-            return _get_response(400, "Invalid access token.")
-    except:
-        return _get_response(400, "Token verification failed.")
+    # try:
+    auth_data = ws_guest_token_auth(event, context)
+    logger.info(auth_data)
+    # except:
+    #     return _get_response(400, "Token verification failed.")
 
     # Get the next message index
     # (Note: there is technically a race condition where two
     # users post at the same time and use the same index, but
     # accounting for that is outside the scope of this project)
     table = dynamodb.Table("serverless-chat_Messages")
-    response = table.query(KeyConditionExpression="Room = :room",
-                           ExpressionAttributeValues={":room": "general"},
-                           Limit=1, ScanIndexForward=False)
-    items = response.get("Items", [])
-    index = items[0]["Index"] + 1 if len(items) > 0 else 0
+    # response = table.query(KeyConditionExpression="Room = :room",
+    #                        ExpressionAttributeValues={":room": "general"},
+    #                        Limit=1, ScanIndexForward=False)
+    # items = response.get("Items", [])
+    # index = items[0]["Index"] + 1 if len(items) > 0 else 0
 
     # Add the new message to the database
     timestamp = int(time.time())
     content = body["content"]
-    table.put_item(Item={"Room": "general", "Index": index,
-                         "Timestamp": timestamp, "Username": username,
+    table.put_item(Item={"Room": "general",
+                         "created_at": timestamp,
+                         "Email": email,
+                         "Username": username_obj[0]["Username"],
                          "Content": content})
 
     # Get all current connections
@@ -215,7 +249,8 @@ def send_message(event, context):
     connections = [x["ConnectionID"] for x in items if "ConnectionID" in x]
 
     # Send the message data to all connections
-    message = {"sender": username, "content": content, "created_at": timestamp}
+    message = {"sender": {"Username": username_obj[0]["Username"], "Email": email},
+               "content": content, "created_at": timestamp}
     logger.debug("Broadcasting message: {}".format(message))
     data = {"messages": [message], "end": 1}
     for connectionID in connections:

@@ -3,6 +3,7 @@ service: serverless-chat
 provider:
   name: aws
   runtime: python3.8
+  versionFunctions: false
   region: ap-south-1
   websocketApiName: serverless-chat-api
   websocketApiRouteSelectionExpression: $request.body.action
@@ -58,12 +59,6 @@ functions:
         events:
             - websocket:
                 route: sendMessage
-                authorizer:
-#                    # name: auth    NOTE: you can either use "name" or arn" properties
-#                    arn: arn:aws:lambda:us-east-1:1234567890:function:auth
-#                    identitySource:
-#                      - 'route.request.header.Auth'
-#                      - 'route.request.querystring.Auth'
     setConversation:
         handler: handlers/handler.set_conversation
         package: {}
@@ -115,6 +110,42 @@ functions:
       events:
         - http:
             path: set-username
+            method: put
+            cors:
+              origin: '*'
+              headers:
+                - Content-Type
+                - t2m-temptoken
+              allowCredentials: false
+            authorizer:
+              name: tempTokenAuthorizer
+              resultTtlInSeconds: 0
+              identitySource: method.request.header.t2m-temptoken
+              type: request
+    getUser:
+      handler: handlers/user.get_user
+      package: {}
+      events:
+        - http:
+            path: get-user
+            method: get
+            cors:
+              origin: '*'
+              headers:
+                - Content-Type
+                - t2m-temptoken
+              allowCredentials: false
+            authorizer:
+              name: tempTokenAuthorizer
+              resultTtlInSeconds: 0
+              identitySource: method.request.header.t2m-temptoken
+              type: request
+    setUser:
+      handler: handlers/user.set_user
+      package: {}
+      events:
+        - http:
+            path: set-user
             method: put
             cors:
               origin: '*'

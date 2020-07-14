@@ -7,7 +7,7 @@ import uuid
 from lambda_decorators import cors_headers
 
 from handlers.handler import _get_response, _get_body
-from utils.username import get_username
+from utils.user import get_user_by_email
 from utils.auth_token_generator import get_auth_tokens
 from utils.jwt_utils import jwt_decode
 
@@ -25,13 +25,12 @@ def get_tokens(event, context, items=None):
         if attribute not in body:
             return _get_response(400, "'{}' not in message dict".format(attribute))
 
-
     try:
-        username = event.get("requestContext", {}).get("authorizer", {}).get("username")
+        email = event.get("requestContext", {}).get("authorizer", {}).get("email")
     except:
         return _get_response(400, "Can't access username.")
 
-    username_obj = get_username(username)
+    username_obj = get_user_by_email(email)
 
     if len(username_obj) == 0:
         return _get_response(400, "Username not found.")
@@ -42,11 +41,11 @@ def get_tokens(event, context, items=None):
     decoded_a_token = jwt_decode(username_obj[0]["accessToken"])
 
     if decoded_a_token["exp"] <= int(time.time()):
-        tokens = get_auth_tokens(username)
-        username_table = dynamo_db.Table("serverless-chat_Username")
+        tokens = get_auth_tokens(email)
+        username_table = dynamo_db.Table("serverless-chat_Users")
         try:
             username_table.update_item(
-                Key={'Username': username},
+                Key={'Email': email},
                 UpdateExpression="set accessToken=:a, refreshToken=:r",
                 ExpressionAttributeValues={
                     ':a': tokens['access_token'],

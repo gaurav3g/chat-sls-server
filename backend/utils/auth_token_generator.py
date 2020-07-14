@@ -12,21 +12,21 @@ logger.setLevel(logging.DEBUG)
 dynamo_db = boto3.resource("dynamodb")
 
 
-def get_access_token(username=""):
+def get_access_token(email=""):
     curr_time = int(time.time())
     token_obj = {
         "exp": curr_time + 3600,
         "iat": curr_time,
-        "username": username
+        "email": email
     }
     return jwt_encode(token_obj)
 
 
-def get_refresh_token(username="", access_token=""):
+def get_refresh_token(email="", access_token=""):
     return jwt_encode({
         "uuid": str(uuid.uuid1()),
         "token": str(access_token),
-        "username": username
+        "email": email
     })
 
 

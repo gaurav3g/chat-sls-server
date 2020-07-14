@@ -2,11 +2,16 @@ import json
 import time
 import urllib.request
 import logging
+import boto3
 from jose import jwk, jwt
 from jose.utils import base64url_decode
 
 from utils.generate_auth_policy import generatePolicy
-from utils.username import get_username
+from utils.user import get_user_by_email
+from utils.jwt_utils import jwt_decode
+from utils.user_attr_formatter import formatter
+
+cip_client = boto3.client('cognito-idp')
 
 logger = logging.getLogger("handler_logger")
 logger.setLevel(logging.DEBUG)
@@ -23,9 +28,8 @@ with urllib.request.urlopen(keys_url) as f:
     response = f.read()
 keys = json.loads(response.decode('utf-8'))['keys']
 
+
 def decode_verify_jwt(token):
-    # token = event['token']
-    # get the kid from the headers prior to verification
     response = {
         "status": {
             "code": 200,
@@ -78,45 +82,52 @@ def decode_verify_jwt(token):
         return response
 
     # now we can use the claims
-    logger.debug(claims)
     response["data"] = claims
     return response
 
 
+def token_pool_auth(token):
+    result = {"status": False, "data": {}}
+    try:
+        idInformation = decode_verify_jwt(token)
+
+        if idInformation['status']["code"] == 200:
+            result["status"] = True
+            result["data"] = idInformation['data']
+
+    except ValueError as err:
+        logger.debug("Failed: invalid User pool token")
+
+    return result
+
+
 def user_pool_auth(event, context):
     try:
-        # Verify and get information from id_token
-        idInformation = decode_verify_jwt(event['headers']['t2m-authtoken'])
-        logger.info(idInformation)
+        token_auth = token_pool_auth(event['headers']['t2m-authtoken'])
 
-        # Deny access if the account is not a Google account
-        if idInformation['status']["code"] == 400:
+        if not token_auth["status"]:
             return generatePolicy(None, 'Deny', event['methodArn'])
 
         # Get principalId from idInformation
-        principalId = idInformation["data"]["sub"]
+        principalId = token_auth["data"]["sub"]
 
     except ValueError as err:
-        # Deny access if the token is invalid
-        print(err)
         return generatePolicy(None, 'Deny', event['methodArn'])
 
-    return generatePolicy(principalId, 'Allow', event['methodArn'], idInformation['data'])
+    return generatePolicy(principalId, 'Allow', event['methodArn'], token_auth['data'])
 
 
 def temp_token_auth(event, context):
-    logger.info(event)
     try:
         payload = jwt.decode(event['headers']['t2m-temptoken'],
                              "#0wc-0-#@#14e8rbk#bke_9rg@nglfdc3&6z_r6nx!q6&3##l=",
                              algorithms="HS256")
-        username = payload.get("username")
-        logger.info("Verified JWT for '{}'".format(username))
+        email = payload.get("email")
     except ValueError as err:
         logger.debug("Failed: Token verification failed.")
         return generatePolicy(None, 'Deny', event['methodArn'])
 
-    return generatePolicy(username, 'Allow', event['methodArn'], {"username": username})
+    return generatePolicy(email, 'Allow', event['methodArn'], {"email": email})
 
 
 def guest_token_auth(event, context):
@@ -125,18 +136,17 @@ def guest_token_auth(event, context):
         payload = jwt.decode(event['headers']['t2m-temptoken'],
                              "#0wc-0-#@#14e8rbk#bke_9rg@nglfdc3&6z_r6nx!q6&3##l=",
                              algorithms="HS256")
-        username = payload.get("username")
-        username_obj = get_username(username)
+        email = payload.get("email")
+        username_obj = get_user_by_email(email)
         if len(username_obj) <= 0:
             logger.debug("Failed: User doesn't exist.")
             return generatePolicy(None, 'Deny', event['methodArn'])
 
-        logger.info("Verified JWT for '{}'".format(username))
     except ValueError as err:
         logger.debug("Failed: Token verification failed.")
         return generatePolicy(None, 'Deny', event['methodArn'])
 
-    return generatePolicy(username, 'Allow', event['methodArn'], {"username": username})
+    return generatePolicy(email, 'Allow', event['methodArn'], {"email": email})
 
 
 # def ws_temp_token_auth(event, context):
@@ -155,26 +165,40 @@ def guest_token_auth(event, context):
 
 
 def ws_guest_token_auth(event, context):
+    result = {"user": None, "effect": "Deny",
+              "methodArn": event['methodArn'], "data": None}
+    token = event.get("queryStringParameters", {}).get('token')
+    authFlag = 0
     try:
-        token = event.get("queryStringParameters", {}).get('token')
-        payload = jwt.decode(token,
-                             "#0wc-0-#@#14e8rbk#bke_9rg@nglfdc3&6z_r6nx!q6&3##l=",
-                             algorithms="HS256")
-        username = payload.get("username")
+        if event.get("queryStringParameters", {}).get('auth'):
+            authFlag = event.get("queryStringParameters", {}).get('auth')
+    except:
+        logger.debug("Failed: unable to get auth flag")
+
+    if authFlag:
+        token_auth = token_pool_auth(token)
+
+        if token_auth["status"]:
+            result["user"] = token_auth["data"]["sub"]
+            result["effect"] = "Allow"
+            try:
+                user = cip_client.get_user(AccessToken=token)
+                user_data = formatter(user["UserAttributes"])
+                result["data"] = user_data
+                # logger.info(user_data)
+            except:
+                logger.debug("Failed: Unable to fetch user data")
+    else:
+        payload = jwt_decode(token)
+        email = payload.get("email")
         exp = payload.get("exp")
-        username_obj = get_username(username)
 
-        if len(username_obj) <= 0 :
-            logger.debug("Failed: User doesn't exist.")
-            return generatePolicy(None, 'Deny', event['methodArn'])
+        username_obj = get_user_by_email(email)
 
-        if username_obj[0]["accessToken"] != token or exp <= int(time.time()):
-            logger.debug("Failed: Invalid access token")
-            return generatePolicy(None, 'Deny', event['methodArn'])
+        if len(username_obj) > 0 and username_obj[0]["accessToken"] == token \
+                and exp > int(time.time()):
+            result["user"] = "user"
+            result["effect"] = "Allow"
+            result["data"] = {"email": email}
 
-    except ValueError as err:
-        logger.debug("Failed: Token verification failed.")
-        return generatePolicy(None, 'Deny', event['methodArn'])
-
-    return generatePolicy("user", 'Allow', event['methodArn'], {"username": username})
-
+    return generatePolicy(result["user"], result["effect"], result['methodArn'], result["data"])
