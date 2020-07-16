@@ -9,7 +9,7 @@ from lambda_decorators import cors_headers
 from utils.json_encoder import json_encoder
 from utils.user_attr_formatter import formatter
 from utils.user import get_user_by_email
-from helpers.authorizers import ws_guest_token_auth
+from helpers.authorizers import ws_token_auth
 
 logger = logging.getLogger("handler_logger")
 logger.setLevel(logging.DEBUG)
@@ -188,8 +188,12 @@ def get_recent_messages(event, context):
         if x['Email'] not in parsed_user:
             parsed_user[x['Email']] = get_user_by_email(x['Email'])[0]
 
-        return {**x, "sender": {"Username": parsed_user[x['Email']]["Username"],
+        resp = {**x, "sender": {"Username": parsed_user[x['Email']]["Username"],
                                 "Email": parsed_user[x['Email']]["Email"]}}
+        if "Email" in resp:
+            del resp['Email']
+
+        return resp
 
     messages = list(map(map_function, messages))
     logger.info('after map : {}'.format(messages))
@@ -216,11 +220,15 @@ def send_message(event, context):
                                  .format(attribute))
 
     # Verify the token
-    # try:
-    auth_data = ws_guest_token_auth(event, context)
-    logger.info(auth_data)
-    # except:
-    #     return _get_response(400, "Token verification failed.")
+    try:
+        auth_data = ws_token_auth(body["token"], body["auth"] if "auth" in body else 0)
+        if auth_data['effect'] == "Deny":
+            return _get_response(400, "Token verification failed.")
+
+        email = auth_data['data']['email']
+        username = auth_data['data']['preferred_username']
+    except:
+        return _get_response(400, "Token verification failed.")
 
     # Get the next message index
     # (Note: there is technically a race condition where two
@@ -239,7 +247,6 @@ def send_message(event, context):
     table.put_item(Item={"Room": "general",
                          "created_at": timestamp,
                          "Email": email,
-                         "Username": username_obj[0]["Username"],
                          "Content": content})
 
     # Get all current connections
@@ -249,7 +256,7 @@ def send_message(event, context):
     connections = [x["ConnectionID"] for x in items if "ConnectionID" in x]
 
     # Send the message data to all connections
-    message = {"sender": {"Username": username_obj[0]["Username"], "Email": email},
+    message = {"sender": {"Username": username, "Email": email},
                "content": content, "created_at": timestamp}
     logger.debug("Broadcasting message: {}".format(message))
     data = {"messages": [message], "end": 1}

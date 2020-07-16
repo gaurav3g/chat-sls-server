@@ -163,19 +163,12 @@ def guest_token_auth(event, context):
 #     logger.info(generatePolicy("user", 'Allow', event['methodArn'], {"username": username}))
 #     return generatePolicy("user", 'Allow', event['methodArn'], {"username": username})
 
+def ws_token_auth(token, auth_flag=0):
+    result = {"user": None, "effect": "Deny", "data": None}
+    if token is None:
+        return result
 
-def ws_guest_token_auth(event, context):
-    result = {"user": None, "effect": "Deny",
-              "methodArn": event['methodArn'], "data": None}
-    token = event.get("queryStringParameters", {}).get('token')
-    authFlag = 0
-    try:
-        if event.get("queryStringParameters", {}).get('auth'):
-            authFlag = event.get("queryStringParameters", {}).get('auth')
-    except:
-        logger.debug("Failed: unable to get auth flag")
-
-    if authFlag:
+    if auth_flag:
         token_auth = token_pool_auth(token)
 
         if token_auth["status"]:
@@ -185,7 +178,6 @@ def ws_guest_token_auth(event, context):
                 user = cip_client.get_user(AccessToken=token)
                 user_data = formatter(user["UserAttributes"])
                 result["data"] = user_data
-                # logger.info(user_data)
             except:
                 logger.debug("Failed: Unable to fetch user data")
     else:
@@ -199,6 +191,54 @@ def ws_guest_token_auth(event, context):
                 and exp > int(time.time()):
             result["user"] = "user"
             result["effect"] = "Allow"
-            result["data"] = {"email": email}
+            result["data"] = {"email": email, "preferred_username": username_obj[0]["Username"]}
 
-    return generatePolicy(result["user"], result["effect"], result['methodArn'], result["data"])
+    return result
+
+
+def ws_guest_token_auth(event, context):
+    result = {"user": None, "effect": "Deny",
+              "methodArn": event['methodArn'], "data": None}
+    token = event.get("queryStringParameters", {}).get('token')
+    authFlag = 0
+    try:
+        if event.get("queryStringParameters", {}).get('auth'):
+            authFlag = event.get("queryStringParameters", {}).get('auth')
+    except:
+        logger.debug("Failed: unable to get auth flag")
+
+    try:
+        auth_resp = ws_token_auth(token, authFlag)
+        return generatePolicy(auth_resp["user"], auth_resp["effect"],
+                              event['methodArn'], auth_resp["data"])
+    except:
+        logger.debug("Failed: Token WS verification failed.")
+        return generatePolicy(result["user"], result["effect"],
+                              event['methodArn'], result["data"])
+    # if authFlag:
+    #     token_auth = token_pool_auth(token)
+    #
+    #     if token_auth["status"]:
+    #         result["user"] = token_auth["data"]["sub"]
+    #         result["effect"] = "Allow"
+    #         try:
+    #             user = cip_client.get_user(AccessToken=token)
+    #             user_data = formatter(user["UserAttributes"])
+    #             result["data"] = user_data
+    #             # logger.info(user_data)
+    #         except:
+    #             logger.debug("Failed: Unable to fetch user data")
+    # else:
+    #     payload = jwt_decode(token)
+    #     email = payload.get("email")
+    #     exp = payload.get("exp")
+    #
+    #     username_obj = get_user_by_email(email)
+    #
+    #     if len(username_obj) > 0 and username_obj[0]["accessToken"] == token \
+    #             and exp > int(time.time()):
+    #         result["user"] = "user"
+    #         result["effect"] = "Allow"
+    #         result["data"] = {"email": email}
+
+    # return generatePolicy(result["user"], result["effect"], result['methodArn'], result["data"])
