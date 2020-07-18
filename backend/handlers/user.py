@@ -9,6 +9,8 @@ from lambda_decorators import cors_headers
 from handlers.handler import _get_response, _get_body
 from utils.user import get_user_by_email
 from utils.auth_token_generator import get_auth_tokens
+from helpers.db import db
+
 
 logger = logging.getLogger("handler_logger")
 logger.setLevel(logging.DEBUG)
@@ -40,8 +42,6 @@ def set_user(event, context):
                              .format("email"))
 
     email = body['email']
-    user_table = dynamodb.Table("serverless-chat_Users")
-
     user_obj = get_user_by_email(email)
 
     if len(user_obj) > 0:
@@ -49,15 +49,13 @@ def set_user(event, context):
     else:
         # username_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, username))
         tokens = get_auth_tokens(email)
-        try:
-            user_item = {"Email": email,
-                         "email_verified": False,
-                         "Username": email.split("@")[0],
-                         "accessToken": tokens["access_token"],
-                         "refreshToken": tokens["refresh_token"],
-                         "ConnectionID": ""
-                         }
-            user_table.put_item(Item=user_item)
-            return _get_response(200, user_item)
-        except:
-            return _get_response(404, "User can't create")
+        # try:
+        user_item = {"email_verified": False,
+                     "username": email.split("@")[0],
+                     "accessToken": tokens["access_token"],
+                     "refreshToken": tokens["refresh_token"],
+                     "connectionID": ""}
+        db.collection("users").document(email).set(user_item)
+        return _get_response(200, user_item)
+        # except:
+        #     return _get_response(404, "User can't create")

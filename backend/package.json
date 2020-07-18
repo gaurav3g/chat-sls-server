@@ -5,10 +5,10 @@
   "dependencies": {
     "aws-sdk": "^2.696.0",
     "serverless-dynamodb-local": "^0.2.39",
-    "serverless-http": "^2.5.0",
-    "serverless-offline": "^6.4.0"
+    "serverless-http": "^2.5.0"
   },
   "devDependencies": {
+    "serverless-offline": "^6.4.0",
     "serverless-python-requirements": "^5.1.0"
   }
 }
