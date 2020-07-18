@@ -10,9 +10,13 @@ from utils.json_encoder import json_encoder
 from utils.user_attr_formatter import formatter
 from utils.user import get_user_by_email
 from helpers.authorizers import ws_token_auth
+from utils.jwt_utils import jwt_decode
+from helpers.db import db, firestore
+
 
 logger = logging.getLogger("handler_logger")
 logger.setLevel(logging.DEBUG)
+
 
 dynamodb = boto3.resource("dynamodb")
 cognito_client = boto3.client('cognito-idp')
@@ -49,13 +53,13 @@ def _send_to_connection(connection_id, data, event):
 
 
 def connection_manager(event, context):
-    logger.info(event)
+    # logger.info(event)
     connectionID = event["requestContext"].get("connectionId")
     token = event.get("queryStringParameters", {}).get("token")
 
     if event["requestContext"]["eventType"] == "CONNECT":
-        logger.info("Connect requested (CID: {}, Token: {})" \
-                    .format(connectionID, token))
+        # logger.info("Connect requested (CID: {}, Token: {})" \
+        #             .format(connectionID, token))
 
         # Ensure connectionID and token are set
         if not connectionID:
@@ -64,30 +68,20 @@ def connection_manager(event, context):
         if not token:
             return _get_response(400, "token query parameter not provided.")
 
-        # Verify the token
-        # try:
-        #     payload = jwt.decode(token,
-        #                          "#0wc-0-#@#14e8rbk#bke_9rg@nglfdc3&6z_r6nx!q6&3##l=",
-        #                          algorithms="HS256")
-        #     email = payload.get("email")
-        #
-        # except:
-        #     return _get_response(400, "Token verification failed.")
-
-        email = event.get("requestContext", {}).get("authorizer", {}).get("email")
+        if event.get("requestContext", {}).get("authorizer") is not None:
+            email = event.get("requestContext", {}).get("authorizer", {}).get("email")
+        else:
+            user_obj = get_user_by_email(jwt_decode(token)['email'])
+            if len(user_obj) > 0:
+                email = user_obj[0]["email"]
 
         # Add connectionID to the database
-        user_table = dynamodb.Table("serverless-chat_Users")
-        user_table.update_item(
-            Key={'Email': email},
-            UpdateExpression="set ConnectionID=:c",
-            ExpressionAttributeValues={
-                ':c': connectionID
-            },
-            ReturnValues="UPDATED_NEW"
-        )
-        connection_table = dynamodb.Table("serverless-chat_Connections")
-        connection_table.put_item(Item={"ConnectionID": connectionID, 'Email': email})
+        user_ref = db.collection(u'users').document(email)
+        user_ref.update({'connectionID': connectionID})
+
+        connection_ref = db.collection(u'connections').document(connectionID)
+        connection_ref.set({'email': email})
+
         return _get_response(200, "Connect successful.")
 
     elif event["requestContext"]["eventType"] == "DISCONNECT":
@@ -99,27 +93,19 @@ def connection_manager(event, context):
             return _get_response(500, "connectionId value not set.")
 
         # Remove the connectionID from the database
-        table = dynamodb.Table("serverless-chat_Connections")
+        connections_ref = db.collection(u'connections').document(connectionID).get()
+        if connections_ref.exists:
+            conn_obj = connections_ref.to_dict()
 
-        response = table.query(KeyConditionExpression="ConnectionID = :c",
-                               ExpressionAttributeValues={":c": connectionID},
-                               Limit=1, ScanIndexForward=False)
+            email = conn_obj['email']
 
-        email = response.get("Items", [])[0]["Email"]
+            user_ref = db.collection(u'users').document(email)
+            user_ref.update({'connectionID': ''})
 
-        user_connection_table = dynamodb.Table("serverless-chat_Users")
-        user_connection_table.update_item(
-            Key={'Email': email},
-            UpdateExpression="set ConnectionID=:c",
-            ExpressionAttributeValues={
-                ':c': ""
-            },
-            ReturnValues="UPDATED_NEW"
-        )
-
-        table.delete_item(Key={"ConnectionID": connectionID})
-        return _get_response(200, "Disconnect successful.")
-
+            db.collection(u'connections').document(connectionID).delete()
+            return _get_response(200, "Disconnect successful.")
+        else:
+            return _get_response(400, "Invalid connection id.")
     else:
         logger.error("Connection manager received unrecognized eventType '{}'" \
                      .format(event["requestContext"]["eventType"]))
@@ -135,9 +121,6 @@ def default_message(event, context):
 
 
 def get_recent_messages(event, context):
-    """
-    Return the 10 most recent chat messages.
-    """
     body = _get_body(event)
     connectionID = event["requestContext"].get("connectionId")
     logger.info("Retrieving most recent messages for CID '{}'" \
@@ -161,48 +144,49 @@ def get_recent_messages(event, context):
 
     logger.info(LastEvaluatedKeyIn)
 
-    # Get the 10 most recent chat messages
-    table = dynamodb.Table("serverless-chat_Messages")
-
+    messages = []
     if LastEvaluatedKeyIn is not None:
-        response = table.query(KeyConditionExpression="Room = :room",
-                               ExpressionAttributeValues={":room": "general"},
-                               Limit=limit, ExclusiveStartKey={'Index': LastEvaluatedKeyIn, 'Room': 'general'},
-                               ScanIndexForward=False)
+        query = db.collection(u'rooms').\
+            document(u'general').collection(u'messages').\
+            order_by(u'created_at', direction=firestore.Query.DESCENDING).\
+            limit(limit).start_after(LastEvaluatedKeyIn).stream()
+        print(response)
     else:
-        response = table.query(KeyConditionExpression="Room = :room",
-                               ExpressionAttributeValues={":room": "general"},
-                               Limit=limit, ScanIndexForward=False)
+        query = db.collection(u'rooms'). \
+            document(u'general').collection(u'messages'). \
+            order_by(u'created_at', direction=firestore.Query.DESCENDING).\
+            start_after("54zvuhw1yi80bVMU5ZCd").limit(limit).stream()
 
-    items = response.get("Items", [])
+    LastEvaluatedKeyOut = None
+    for doc in query:
+        LastEvaluatedKeyOut = doc.to_dict()
+        message = doc.to_dict()
+        messages.append({"email": message["email"],
+                         "content": message["content"],
+                         "created_at": message["created_at"]})
 
-    # Extract the relevant data and order chronologically
-    messages = [{"Email": x["Email"], "content": x["Content"], "created_at": x["created_at"]}
-                for x in items]
     messages.reverse()
-
     parsed_user = {}
-    logger.info('b4 map : {}'.format(messages))
 
     def map_function(x):
-        if x['Email'] not in parsed_user:
-            parsed_user[x['Email']] = get_user_by_email(x['Email'])[0]
+        if x['email'] not in parsed_user:
+            parsed_user[x['email']] = get_user_by_email(x['email'])[0]
 
-        resp = {**x, "sender": {"Username": parsed_user[x['Email']]["Username"],
-                                "Email": parsed_user[x['Email']]["Email"]}}
-        if "Email" in resp:
-            del resp['Email']
+        resp = {**x, "sender": {"username": parsed_user[x['email']]["username"],
+                                "email": parsed_user[x['email']]["email"]}}
+        if "email" in resp:
+            del resp['email']
 
         return resp
 
     messages = list(map(map_function, messages))
-    logger.info('after map : {}'.format(messages))
+    logger.info(messages)
 
     # Send them to the client who asked for it
     data = {"messages": messages}
 
-    if response.get('LastEvaluatedKey', None) is not None:
-        data["LastEvaluatedKey"] = int(response.get('LastEvaluatedKey', None).get("Index", None))
+    if LastEvaluatedKeyOut is not None:
+        data["LastEvaluatedKey"] = LastEvaluatedKeyOut
 
     _send_to_connection(connectionID, data, event)
 
@@ -230,33 +214,22 @@ def send_message(event, context):
     except:
         return _get_response(400, "Token verification failed.")
 
-    # Get the next message index
-    # (Note: there is technically a race condition where two
-    # users post at the same time and use the same index, but
-    # accounting for that is outside the scope of this project)
     table = dynamodb.Table("serverless-chat_Messages")
-    # response = table.query(KeyConditionExpression="Room = :room",
-    #                        ExpressionAttributeValues={":room": "general"},
-    #                        Limit=1, ScanIndexForward=False)
-    # items = response.get("Items", [])
-    # index = items[0]["Index"] + 1 if len(items) > 0 else 0
-
-    # Add the new message to the database
+   # Add the new message to the database
     timestamp = int(time.time())
     content = body["content"]
-    table.put_item(Item={"Room": "general",
-                         "created_at": timestamp,
-                         "Email": email,
-                         "Content": content})
+    table_ref = db.collection(u'rooms').document(u'general').collection(u'messages')
+    table_ref.add({"created_at": timestamp,"email": email, "content": content})
 
     # Get all current connections
     table = dynamodb.Table("serverless-chat_Connections")
     response = table.scan(ProjectionExpression="ConnectionID")
     items = response.get("Items", [])
-    connections = [x["ConnectionID"] for x in items if "ConnectionID" in x]
+    connections = db.collection(u'connections').get()
+    connections = list(map(lambda doc: doc.id, connections))
 
     # Send the message data to all connections
-    message = {"sender": {"Username": username, "Email": email},
+    message = {"sender": {"username": username, "email": email},
                "content": content, "created_at": timestamp}
     logger.debug("Broadcasting message: {}".format(message))
     data = {"messages": [message], "end": 1}
@@ -267,9 +240,6 @@ def send_message(event, context):
 
 
 def ping(event, context):
-    """
-    Sanity check endpoint that echoes back 'PONG' to the sender.
-    """
     logger.info("Ping requested.")
     return _get_response(200, "PONG!")
 
@@ -282,14 +252,14 @@ def user_migrate(event, context):
     except:
         logger.info("failed to get user data")
 
-    table = dynamodb.Table("serverless-chat_Users")
     try:
         if user_data is not None:
-            table.put_item(Item={"Email": user_data["email"], "uId": user_data["sub"],
-                                 "email_verified": user_data["email_verified"],
-                                 "Username": user_data["preferred_username"],
-                                 "Gender": user_data["gender"]
-                                 })
+            db.collection("users").add({"email": user_data["email"],
+                                        "uId": user_data["sub"],
+                                        "email_verified": user_data["email_verified"],
+                                        "username": user_data["preferred_username"],
+                                        "Gender": user_data["gender"]
+                                        });
     except:
         logger.info("Failed to put user object!")
 
@@ -325,14 +295,14 @@ def set_conversation(event, context, items=None):
     user_table = dynamodb.Table("serverless-chat_Users")
     createFlag = True
 
-    user_response = user_table.query(KeyConditionExpression="Email = :email",
+    user_response = user_table.query(KeyConditionExpression="email = :email",
                                      ExpressionAttributeValues={
                                          ":email": body['participant']},
                                      Limit=1)
     user_obj = user_response.get("Items", [])
     if len(user_obj) > 0:
-        participant = {"username": user_obj[0]["Username"],
-                       "email": user_obj[0]["Email"],
+        participant = {"username": user_obj[0]["username"],
+                       "email": user_obj[0]["email"],
                        "uId": user_obj[0]['uId']}
     else:
         return _get_response(400, "User not found.")

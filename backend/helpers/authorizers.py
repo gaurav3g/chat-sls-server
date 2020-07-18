@@ -191,7 +191,7 @@ def ws_token_auth(token, auth_flag=0):
                 and exp > int(time.time()):
             result["user"] = "user"
             result["effect"] = "Allow"
-            result["data"] = {"email": email, "preferred_username": username_obj[0]["Username"]}
+            result["data"] = {"email": email, "preferred_username": username_obj[0]["username"]}
 
     return result
 
